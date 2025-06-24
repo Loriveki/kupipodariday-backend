@@ -27,9 +27,6 @@ export class CreateWishDto {
   @IsNumber()
   price: number;
 
-  @IsNumber()
-  raised: number;
-
   @IsNotEmpty()
   @IsString()
   @MinLength(1)
@@ -38,8 +35,4 @@ export class CreateWishDto {
 
   @IsNumber()
   copied: number;
-
-  @IsNotEmpty()
-  @IsNumber()
-  ownerId: number;
 }

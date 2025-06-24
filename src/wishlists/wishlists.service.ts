@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindOptionsWhere } from 'typeorm';
 import { Wishlist } from './entities/wishlist.entity';
@@ -14,41 +14,35 @@ export class WishlistsService {
     private usersService: UsersService,
   ) {}
 
-  async create(dto: CreateWishlistDto): Promise<Wishlist> {
-    const user = await this.usersService.findOneByFilter({ id: dto.userId });
+  async create(dto: CreateWishlistDto, userId: number): Promise<Wishlist> {
+    const user = await this.usersService.findOneByFilter({ id: userId });
     const wishlist = this.wishlistRepo.create({ ...dto, user });
     return await this.wishlistRepo.save(wishlist);
   }
 
-  async findManyByFilter(
-    filter: FindOptionsWhere<Wishlist>,
-  ): Promise<Wishlist[]> {
-    return await this.wishlistRepo.find({
-      where: filter,
-      relations: ['user', 'items'],
-    });
+  async findManyByFilter(filter: FindOptionsWhere<Wishlist>): Promise<Wishlist[]> {
+    return await this.wishlistRepo.find({ where: filter, relations: ['user', 'items'] });
   }
 
   async findOneByFilter(filter: FindOptionsWhere<Wishlist>): Promise<Wishlist> {
-    const wl = await this.wishlistRepo.findOne({
-      where: filter,
-      relations: ['user', 'items'],
-    });
+    const wl = await this.wishlistRepo.findOne({ where: filter, relations: ['user', 'items'] });
     if (!wl) throw new NotFoundException('Wishlist not found');
     return wl;
   }
 
-  async updateOne(
-    filter: FindOptionsWhere<Wishlist>,
-    dto: UpdateWishlistDto,
-  ): Promise<Wishlist> {
-    const wl = await this.findOneByFilter(filter);
-    await this.wishlistRepo.update(wl.id, dto);
-    return await this.findOneByFilter({ id: wl.id });
+  async update(id: number, dto: UpdateWishlistDto, userId: number): Promise<Wishlist> {
+    const wl = await this.findOneByFilter({ id });
+    if (wl.user.id !== userId) {
+      throw new UnauthorizedException('You can only update your own wishlist');
+    }
+    return await this.wishlistRepo.save({ ...wl, ...dto });
   }
 
-  async removeOne(filter: FindOptionsWhere<Wishlist>): Promise<void> {
-    const wl = await this.findOneByFilter(filter);
+  async remove(id: number, userId: number): Promise<void> {
+    const wl = await this.findOneByFilter({ id });
+    if (wl.user.id !== userId) {
+      throw new UnauthorizedException('You can only delete your own wishlist');
+    }
     await this.wishlistRepo.remove(wl);
   }
 }

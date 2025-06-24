@@ -10,9 +10,5 @@ export class CreateOfferDto {
 
   @IsNotEmpty()
   @IsNumber()
-  userId: number;
-
-  @IsNotEmpty()
-  @IsNumber()
   itemId: number;
 }
