@@ -10,19 +10,17 @@ import { Wish } from '../../wishes/entities/wish.entity';
 import { Offer } from '../../offers/entities/offer.entity';
 import { Wishlist } from '../../wishlists/entities/wishlist.entity';
 import { IsString, MinLength, MaxLength, IsEmail } from 'class-validator';
-import { Exclude, Expose } from 'class-transformer';
+import { Exclude } from 'class-transformer';
 
 @Entity('users')
 export class User {
   @PrimaryGeneratedColumn()
-  @Expose()
   id: number;
 
   @Column({ type: 'varchar', length: 30, unique: true, nullable: false })
   @IsString()
   @MinLength(2)
   @MaxLength(30)
-  @Expose()
   username: string;
 
   @Column({
@@ -33,18 +31,15 @@ export class User {
   @IsString()
   @MinLength(2)
   @MaxLength(200)
-  @Expose()
   about: string;
 
   @Column({ type: 'varchar', default: 'https://i.pravatar.cc/300' })
   @IsString()
-  @Expose()
   avatar: string;
 
   @Column({ type: 'varchar', unique: true, nullable: false })
   @IsString()
   @IsEmail()
-  @Expose()
   email: string;
 
   @Column({ type: 'varchar', nullable: false })
@@ -53,19 +48,20 @@ export class User {
   password: string;
 
   @CreateDateColumn()
-  @Expose()
   createdAt: Date;
 
   @UpdateDateColumn()
-  @Expose()
   updatedAt: Date;
 
   @OneToMany(() => Wish, (wish) => wish.owner)
+  @Exclude()
   wishes: Wish[];
 
   @OneToMany(() => Offer, (offer) => offer.user)
+  @Exclude()
   offers: Offer[];
 
   @OneToMany(() => Wishlist, (wishlist) => wishlist.user)
+  @Exclude()
   wishlists: Wishlist[];
 }

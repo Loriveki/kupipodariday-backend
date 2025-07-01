@@ -6,68 +6,52 @@ import {
   OneToMany,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
+  ManyToMany,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Offer } from '../../offers/entities/offer.entity';
-import { IsString, MinLength, MaxLength, IsUrl } from 'class-validator';
-import { Expose } from 'class-transformer'; 
+import { Wishlist } from '../../wishlists/entities/wishlist.entity';
 
 @Entity()
+@Index(['owner', 'name'], { unique: true })
 export class Wish {
   @PrimaryGeneratedColumn()
-  @Expose()
   id: number;
 
-  @Column({ type: 'varchar', length: 250 })
-  @IsString()
-  @MinLength(1)
-  @MaxLength(250)
-  @Expose()
+  @Column({ length: 250 })
   name: string;
 
-  @Column({ type: 'varchar' })
-  @IsString()
-  @Expose()
-  @IsUrl()
+  @Column({ nullable: true })
   link: string;
 
-  @Column({ type: 'varchar' })
-  @IsString()
-  @IsUrl()
-  @Expose()
+  @Column()
   image: string;
 
-  @Column({ type: 'numeric', precision: 10, scale: 2 })
-  @Expose()
+  @Column('decimal', { precision: 10, scale: 2 })
   price: number;
 
-  @Column({ type: 'numeric', precision: 10, scale: 2, default: 0 })
-  @Expose()
+  @Column('decimal', { precision: 10, scale: 2, default: 0 })
   raised: number;
 
-  @Column({ type: 'varchar', length: 1024 })
-  @IsString()
-  @MinLength(1)
-  @MaxLength(1024)
-  @Expose()
+  @Column({ length: 1024, nullable: true })
   description: string;
 
-  @Column({ type: 'int', default: 0 })
-  @Expose()
+  @Column({ default: 0 })
   copied: number;
 
   @CreateDateColumn()
-  @Expose()
   createdAt: Date;
 
   @UpdateDateColumn()
-  @Expose()
   updatedAt: Date;
 
   @ManyToOne(() => User, (user) => user.wishes, { onDelete: 'CASCADE' })
-  @Expose()
   owner: User;
 
   @OneToMany(() => Offer, (offer) => offer.item)
   offers: Offer[];
+
+  @ManyToMany(() => Wishlist, (wishlist) => wishlist.items)
+  wishlists: Wishlist[];
 }

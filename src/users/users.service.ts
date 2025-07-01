@@ -2,9 +2,10 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, FindOptionsWhere, In, Like, Brackets } from 'typeorm';
+import { Repository, FindOptionsWhere, Brackets } from 'typeorm';
 import { User } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -20,43 +21,58 @@ export class UsersService {
     private hashService: HashService,
   ) {}
 
-  async create(createUserDto: CreateUserDto): Promise<User> {
+  async create(createUserDto: CreateUserDto): Promise<UserResponse> {
     const existingUser = await this.usersRepository.findOne({
       where: [
         { email: createUserDto.email },
         { username: createUserDto.username },
       ],
     });
+
     if (existingUser) {
-      throw new ConflictException('Email or username already exists');
+      throw new ConflictException('Email или username уже существуют');
     }
-    const user = this.usersRepository.create(createUserDto);
-    user.password = await this.hashService.hash(createUserDto.password); 
-    return await this.usersRepository.save(user);
+
+    const hashedPassword = await this.hashService.hash(createUserDto.password);
+    const user = this.usersRepository.create({
+      ...createUserDto,
+      password: hashedPassword,
+    });
+
+    const savedUser = await this.usersRepository.save(user);
+    return instanceToPlain(savedUser) as UserResponse;
   }
 
-  async findMany(filter: FindOptionsWhere<User> | string): Promise<UserResponse[]> {
+  async findMany(
+    filter: FindOptionsWhere<User> | string,
+  ): Promise<UserResponse[]> {
+    const queryBuilder = this.usersRepository
+      .createQueryBuilder('user')
+      .select(['user.id', 'user.username', 'user.about', 'user.avatar']);
+
     if (typeof filter === 'string') {
       const searchTerm = filter.trim().toLowerCase();
-      return await this.usersRepository
-        .createQueryBuilder('user')
-        .where(
-          new Brackets(qb => {
-            qb.where('LOWER(user.username) LIKE :term', { term: `%${searchTerm}%` })
-              .orWhere('LOWER(user.email) LIKE :term', { term: `%${searchTerm}%` });
-          })
-        )
-        .getMany()
-        .then(users => users.map(user => instanceToPlain(user) as UserResponse));
+      queryBuilder.where(
+        new Brackets((qb) => {
+          qb.where('LOWER(user.username) LIKE :term', {
+            term: `%${searchTerm}%`,
+          }).orWhere('LOWER(user.email) LIKE :term', {
+            term: `%${searchTerm}%`,
+          });
+        }),
+      );
+    } else {
+      queryBuilder.where(filter);
     }
-    const users = await this.usersRepository.find({ where: filter });
-    return users.map(user => instanceToPlain(user) as UserResponse);
+
+    const users = await queryBuilder.getMany();
+    return users.map((user) => instanceToPlain(user) as UserResponse);
   }
 
   async findOneByFilter(filter: FindOptionsWhere<User>): Promise<UserResponse> {
     const user = await this.usersRepository.findOne({ where: filter });
     if (!user) {
-      throw new NotFoundException(`User with given filter not found`);
+      throw new NotFoundException('Пользователь не найден');
     }
     return instanceToPlain(user) as UserResponse;
   }
@@ -64,26 +80,23 @@ export class UsersService {
   async findOneByFilterFull(filter: FindOptionsWhere<User>): Promise<User> {
     const user = await this.usersRepository.findOne({ where: filter });
     if (!user) {
-      throw new NotFoundException(`User with given filter not found`);
+      throw new NotFoundException('Пользователь не найден');
     }
     return user;
   }
 
-  async updateOne(filter: FindOptionsWhere<User>, updateUserDto: UpdateUserDto): Promise<UserResponse> {
+  async updateOne(
+    filter: FindOptionsWhere<User>,
+    updateUserDto: UpdateUserDto,
+  ): Promise<UserResponse> {
     const user = await this.findOneByFilterFull(filter);
+    const updatedData = { ...updateUserDto };
     if (updateUserDto.password) {
-      updateUserDto.password = await this.hashService.hash(updateUserDto.password);
+      updatedData.password = await this.hashService.hash(
+        updateUserDto.password,
+      );
     }
-    await this.usersRepository.update(user.id, updateUserDto);
-    return await this.findOneByFilter({ id: user.id });
-  }
-
-  async updateProfile(userId: number, updateUserDto: UpdateUserDto): Promise<UserResponse> {
-    const user = await this.findOneByFilterFull({ id: userId });
-    if (updateUserDto.password) {
-      updateUserDto.password = await this.hashService.hash(updateUserDto.password);
-    }
-    await this.usersRepository.update(user.id, updateUserDto);
+    await this.usersRepository.update(user.id, updatedData);
     return await this.findOneByFilter({ id: user.id });
   }
 
@@ -92,13 +105,39 @@ export class UsersService {
     await this.usersRepository.remove(user);
   }
 
+  async updateProfileWithAuth(
+    userId: number,
+    updateUserDto: UpdateUserDto,
+  ): Promise<UserResponse> {
+    const updatedData = { ...updateUserDto };
+    if (updateUserDto.password) {
+      updatedData.password = await this.hashService.hash(
+        updateUserDto.password,
+      );
+    }
+    return await this.updateOne({ id: userId }, updatedData);
+  }
+
+  async removeWithAuth(
+    filter: FindOptionsWhere<User>,
+    userId: number,
+  ): Promise<void> {
+    const user = await this.findOneByFilterFull(filter);
+    if (user.id !== userId) {
+      throw new UnauthorizedException('Вы можете удалить только свой аккаунт');
+    }
+    await this.removeOne(filter);
+  }
+
   async findOneByOrFilter(usernameOrEmail: string): Promise<User> {
     const user = await this.usersRepository
       .createQueryBuilder('user')
-      .where('user.username = :value OR user.email = :value', { value: usernameOrEmail })
+      .where('user.username = :value OR user.email = :value', {
+        value: usernameOrEmail,
+      })
       .getOne();
     if (!user) {
-      throw new NotFoundException(`User with given filter not found`);
+      throw new NotFoundException('Пользователь не найден');
     }
     return user;
   }

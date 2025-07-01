@@ -13,7 +13,7 @@ import { AuthController } from './auth.controller';
 
 @Module({
   imports: [
-    ConfigModule,
+    ConfigModule.forRoot({ isGlobal: true }),
     UsersModule,
     PassportModule,
     HashModule,
@@ -29,7 +29,13 @@ import { AuthController } from './auth.controller';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, LocalStrategy, JwtStrategy, LocalAuthGuard, JwtAuthGuard],
+  providers: [
+    AuthService,
+    LocalStrategy,
+    JwtStrategy,
+    LocalAuthGuard,
+    JwtAuthGuard,
+  ],
   exports: [AuthService],
 })
 export class AuthModule {}

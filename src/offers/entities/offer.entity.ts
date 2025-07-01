@@ -9,7 +9,7 @@ import {
 import { User } from '../../users/entities/user.entity';
 import { Wish } from '../../wishes/entities/wish.entity';
 import { IsNumber, IsBoolean, IsNotEmpty } from 'class-validator';
-import { Expose } from 'class-transformer'; 
+import { Expose, Transform } from 'class-transformer';
 
 @Entity()
 export class Offer {
@@ -43,4 +43,12 @@ export class Offer {
   @ManyToOne(() => Wish, (wish) => wish.offers, { onDelete: 'CASCADE' })
   @Expose()
   item: Wish;
+
+  @Expose()
+  @Transform(({ obj }) => obj.user?.username || 'Аноним')
+  name: string;
+
+  @Expose()
+  @Transform(({ obj }) => obj.user?.avatar || obj.item?.image || '')
+  img: string;
 }

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindOptionsWhere } from 'typeorm';
 import { Offer } from './entities/offer.entity';
@@ -6,6 +10,8 @@ import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
 import { UsersService } from '../users/users.service';
 import { WishesService } from '../wishes/wishes.service';
+import { EmailService } from '../email/email.service';
+import { HttpException, HttpStatus } from '@nestjs/common';
 
 @Injectable()
 export class OffersService {
@@ -14,54 +20,123 @@ export class OffersService {
     private offerRepo: Repository<Offer>,
     private usersService: UsersService,
     private wishesService: WishesService,
+    private emailService: EmailService,
   ) {}
 
-  async create(dto: CreateOfferDto, userId: number): Promise<Offer> { 
-    const user = await this.usersService.findOneByFilter({ id: userId }); 
-    const item = await this.wishesService.findOneByFilter({ id: dto.itemId });
-    const offer = this.offerRepo.create({ ...dto, user, item });
-    await this.updateRaised(item.id);
-    return await this.offerRepo.save(offer);
+  async createWithAuth(dto: CreateOfferDto, userId: number): Promise<Offer> {
+    const user = await this.usersService.findOneByFilter({ id: userId });
+    const wish = await this.wishesService.findOneByFilter({ id: dto.itemId });
+
+    if (!wish) {
+      throw new NotFoundException('Пожелание не найдено');
+    }
+    if (wish.owner.id === userId) {
+      throw new UnauthorizedException(
+        'Нельзя вносить вклад в собственное пожелание',
+      );
+    }
+    const raised = Number(wish.raised) || 0;
+    const price = Number(wish.price) || 0;
+    if (raised >= price) {
+      throw new HttpException(
+        'Пожелание полностью профинансировано',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const remaining = price - raised;
+    if (dto.amount > remaining) {
+      throw new HttpException(
+        `Сумма превышает остаток ${remaining.toFixed(2)}`,
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const offer = this.offerRepo.create({
+      ...dto,
+      user,
+      item: wish,
+    });
+
+    const savedOffer = await this.offerRepo.save(offer);
+
+    await this.wishesService.updateRaisedFromOffers(dto.itemId);
+
+    if (wish.owner?.email) {
+      await this.emailService.sendOfferNotification(wish.owner.email, {
+        amount: dto.amount,
+        itemName: wish.name,
+        userName: user.username,
+      });
+    }
+
+    return savedOffer;
   }
 
-  async findManyByFilter(filter: FindOptionsWhere<Offer>): Promise<Offer[]> {
-    return await this.offerRepo.find({ where: filter, relations: ['user', 'item'] });
+  async findManyByFilter(
+    filter: FindOptionsWhere<Offer>,
+    userId?: number,
+  ): Promise<Offer[]> {
+    const offers = await this.offerRepo.find({
+      where: filter,
+      relations: ['user', 'item', 'item.owner'],
+    });
+    return offers.map((offer) => this.hideAmountIfNeeded(offer, userId));
   }
 
-  async findOneByFilter(filter: FindOptionsWhere<Offer>): Promise<Offer> {
-    const offer = await this.offerRepo.findOne({ where: filter, relations: ['user', 'item'] });
-    if (!offer) throw new NotFoundException('Offer not found');
+  async findOneByFilter(
+    filter: FindOptionsWhere<Offer>,
+    userId?: number,
+  ): Promise<Offer> {
+    const offer = await this.offerRepo.findOne({
+      where: filter,
+      relations: ['user', 'item', 'item.owner'],
+    });
+
+    if (!offer) {
+      throw new NotFoundException('Не найдены желающие скинуться');
+    }
+
+    return this.hideAmountIfNeeded(offer, userId);
+  }
+
+  private hideAmountIfNeeded(offer: Offer, userId?: number): Offer {
+    if (offer.hidden) {
+      if (!userId) {
+        return { ...offer, amount: null };
+      }
+      const isUserMatch = offer.user && userId === offer.user.id;
+      const isOwnerMatch =
+        offer.item && offer.item.owner && userId === offer.item.owner.id;
+      if (!isUserMatch && !isOwnerMatch) {
+        return { ...offer, amount: null };
+      }
+    }
     return offer;
   }
 
-  async update(id: number, dto: UpdateOfferDto, userId: number): Promise<Offer> {
-    const offer = await this.findOneByFilter({ id });
-    console.log('Offer user ID:', offer.user.id, 'Request user ID:', userId); 
-    if (offer.user.id !== userId) {
-      throw new UnauthorizedException('You can only update your own offer');
-    }
-    if (dto.amount !== undefined) {
-      await this.updateRaised(offer.item.id);
-    }
-    return await this.offerRepo.save({ ...offer, ...dto });
+  async updateOne(
+    filter: FindOptionsWhere<Offer>,
+    dto: UpdateOfferDto,
+  ): Promise<Offer> {
+    const offer = await this.findOneByFilter(filter);
+    const updatedOffer = { ...offer, ...dto };
+    return await this.offerRepo.save(updatedOffer);
   }
 
-  async remove(id: number, userId: number): Promise<void> {
-    const offer = await this.findOneByFilter({ id });
-    if (offer.user.id !== userId) {
-      throw new UnauthorizedException('You can only delete your own offer');
-    }
-    await this.updateRaised(offer.item.id);
+  async removeOne(filter: FindOptionsWhere<Offer>): Promise<void> {
+    const offer = await this.findOneByFilter(filter);
     await this.offerRepo.remove(offer);
   }
 
-  async updateRaised(wishId: number): Promise<void> {
-    const wish = await this.wishesService.findOneByFilter({ id: wishId });
-    const totalRaised = await this.offerRepo
-      .createQueryBuilder('offer')
-      .select('SUM(offer.amount)', 'total')
-      .where('offer.itemId = :wishId', { wishId })
-      .getRawOne();
-    await this.wishesService.setRaised(wish.id, totalRaised.total || 0);
+  private throwUnauthorized(action: string): never {
+    throw new UnauthorizedException(`${action} is not allowed`);
+  }
+
+  async updateWithAuth(): Promise<Offer> {
+    return this.throwUnauthorized('Editing offers');
+  }
+
+  async removeWithAuth(): Promise<void> {
+    return this.throwUnauthorized('Deleting offers');
   }
 }

@@ -3,59 +3,48 @@ import {
   Get,
   Post,
   Body,
-  Patch,
-  Query,
-  Delete,
+  Param,
   UseGuards,
   Request,
-  Param,
 } from '@nestjs/common';
 import { OffersService } from './offers.service';
+import { WishesService } from '../wishes/wishes.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
-import { UpdateOfferDto } from './dto/update-offer.dto';
-import { Offer } from './entities/offer.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { instanceToPlain } from 'class-transformer';
+import { EmailService } from '../email/email.service';
 
 @Controller('offers')
 export class OffersController {
-  constructor(private readonly offersService: OffersService) {}
+  constructor(
+    private readonly offersService: OffersService,
+    private readonly wishesService: WishesService,
+    private readonly emailService: EmailService,
+  ) {}
 
   @UseGuards(JwtAuthGuard)
   @Post()
   async create(@Body() dto: CreateOfferDto, @Request() req): Promise<any> {
-    const offer = await this.offersService.create(dto, req.user.id); 
-    console.log('Created offer:', offer); 
+    const userId = req.user.id;
+    const offer = await this.offersService.createWithAuth(dto, userId);
     return instanceToPlain(offer, { excludeExtraneousValues: true });
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get()
-  async findMany(@Query() filter: Partial<Offer>): Promise<any> {
-    const offers = await this.offersService.findManyByFilter(filter);
-    return offers.map(offer => instanceToPlain(offer, { excludeExtraneousValues: true }));
-  }
-
-  @Get('one')
-  async findOne(@Query('filter') filter: string): Promise<any> {
-    const parsedFilter = filter ? JSON.parse(filter) : {};
-    const offer = await this.offersService.findOneByFilter(parsedFilter);
-    return instanceToPlain(offer, { excludeExtraneousValues: true });
+  async findMany(@Request() req): Promise<any> {
+    const userId = req.user.id;
+    const offers = await this.offersService.findManyByFilter({}, userId);
+    return offers.map((offer) =>
+      instanceToPlain(offer, { excludeExtraneousValues: true }),
+    );
   }
 
   @UseGuards(JwtAuthGuard)
-  @Patch(':id')
-  async updateOne(
-    @Param('id') id: number,
-    @Body() dto: UpdateOfferDto,
-    @Request() req,
-  ): Promise<any> {
-    const offer = await this.offersService.update(+id, dto, req.user.id);
+  @Get(':id')
+  async findOne(@Param('id') id: string, @Request() req): Promise<any> {
+    const userId = req.user.id;
+    const offer = await this.offersService.findOneByFilter({ id: +id }, userId);
     return instanceToPlain(offer, { excludeExtraneousValues: true });
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Delete(':id')
-  async removeOne(@Param('id') id: number, @Request() req): Promise<void> {
-    await this.offersService.remove(+id, req.user.id);
   }
 }

@@ -10,8 +10,15 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Wish } from '../../wishes/entities/wish.entity';
-import { IsString, IsNotEmpty, IsUrl, MinLength, MaxLength } from 'class-validator';
-import { Expose } from 'class-transformer'; 
+import {
+  IsString,
+  IsNotEmpty,
+  IsUrl,
+  MinLength,
+  MaxLength,
+  IsOptional,
+} from 'class-validator';
+import { Expose } from 'class-transformer';
 
 @Entity()
 export class Wishlist {
@@ -35,13 +42,13 @@ export class Wishlist {
   @Expose()
   name: string;
 
-  @Column({ type: 'varchar', length: 1500 })
+  @Column({ type: 'varchar', length: 1500, nullable: true })
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   @MinLength(1)
-  @MaxLength(1500) 
+  @MaxLength(1500)
   @Expose()
-  description: string;
+  description?: string;
 
   @Column({ type: 'varchar' })
   @IsString()
@@ -54,8 +61,7 @@ export class Wishlist {
   @Expose()
   user: User;
 
-  @ManyToMany(() => Wish)
+  @ManyToMany(() => Wish, (wish) => wish.wishlists, { cascade: true })
   @JoinTable()
-  @Expose()
   items: Wish[];
 }
