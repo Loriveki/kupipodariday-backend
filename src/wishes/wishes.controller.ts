@@ -10,9 +10,6 @@ import {
   Param,
   Query,
   HttpCode,
-  HttpException,
-  HttpStatus,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { WishesService } from './wishes.service';
 import { CreateWishDto } from './dto/create-wish.dto';
@@ -44,16 +41,8 @@ export class WishesController {
 
   @Get()
   async findMany(@Query('page') page = 1): Promise<any> {
-    const lastWishes = await this.wishesService.findLast({ page });
-    const topWishes = await this.wishesService.findTop();
-
-    const mergedWishes = [...lastWishes, ...topWishes];
-    const uniqueWishes = Array.from(
-      new Map(mergedWishes.map((wish) => [wish.id, wish])).values(),
-    );
-    const allWishes = uniqueWishes.slice(0, 40);
-
-    const dto = plainToInstance(WishResponseDto, allWishes, {
+    const wishes = await this.wishesService.getCombinedWishes(page);
+    const dto = plainToInstance(WishResponseDto, wishes, {
       excludeExtraneousValues: true,
     });
     return dto.map((wish) => instanceToPlain(wish));
@@ -94,18 +83,6 @@ export class WishesController {
     @Body() updateWishDto: UpdateWishDto,
     @Request() req,
   ): Promise<any> {
-    const wish = await this.wishesService.findOneById(id);
-    if (wish.owner.id !== req.user.id) {
-      throw new UnauthorizedException(
-        'Вы можете обновлять только свои пожелания',
-      );
-    }
-    if (wish.raised > 0) {
-      throw new HttpException(
-        'Нельзя редактировать подарок, на который уже скидывались',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
     const updatedWish = await this.wishesService.updateWithAuth(
       { id },
       updateWishDto,

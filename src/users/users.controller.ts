@@ -39,8 +39,11 @@ export class UsersController {
   }
 
   @Get()
-  async findMany(@Query('search') search?: string): Promise<any> {
-    const users = await this.usersService.findMany(search || {});
+  async findMany(
+    @Query('search') search?: string,
+    @Request() req?,
+  ): Promise<any> {
+    const users = await this.usersService.findMany(search || {}, req?.user?.id);
     const dto = plainToInstance(UserResponseDto, users, {
       excludeExtraneousValues: true,
     });
@@ -121,7 +124,7 @@ export class UsersController {
     const dto = plainToInstance(UserResponseDto, user, {
       excludeExtraneousValues: true,
     });
-    const { ...userWithoutEmail } = instanceToPlain(dto) as any; 
+    const { ...userWithoutEmail } = instanceToPlain(dto) as any;
     return userWithoutEmail;
   }
 
@@ -141,8 +144,8 @@ export class UsersController {
 
   @UseGuards(JwtAuthGuard)
   @Post('find')
-  async findUsers(@Body('query') query: string): Promise<any> {
-    const users = await this.usersService.findMany(query);
+  async findUsers(@Body('query') query: string, @Request() req): Promise<any> {
+    const users = await this.usersService.findMany(query, req.user.id);
     const dto = plainToInstance(UserResponseDto, users, {
       excludeExtraneousValues: true,
     });

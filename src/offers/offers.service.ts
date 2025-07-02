@@ -2,16 +2,18 @@ import {
   Injectable,
   NotFoundException,
   UnauthorizedException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, FindOptionsWhere } from 'typeorm';
+import { Repository, FindOptionsWhere, DataSource } from 'typeorm';
 import { Offer } from './entities/offer.entity';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
 import { UsersService } from '../users/users.service';
 import { WishesService } from '../wishes/wishes.service';
 import { EmailService } from '../email/email.service';
-import { HttpException, HttpStatus } from '@nestjs/common';
 
 @Injectable()
 export class OffersService {
@@ -21,55 +23,65 @@ export class OffersService {
     private usersService: UsersService,
     private wishesService: WishesService,
     private emailService: EmailService,
+    private dataSource: DataSource,
   ) {}
 
   async createWithAuth(dto: CreateOfferDto, userId: number): Promise<Offer> {
-    const user = await this.usersService.findOneByFilter({ id: userId });
-    const wish = await this.wishesService.findOneByFilter({ id: dto.itemId });
+    return await this.dataSource.transaction(
+      async (transactionalEntityManager) => {
+        const user = await this.usersService.findOneByFilter({ id: userId });
+        const wish = await this.wishesService.findOneByFilter({
+          id: dto.itemId,
+        });
 
-    if (!wish) {
-      throw new NotFoundException('Пожелание не найдено');
-    }
-    if (wish.owner.id === userId) {
-      throw new UnauthorizedException(
-        'Нельзя вносить вклад в собственное пожелание',
-      );
-    }
-    const raised = Number(wish.raised) || 0;
-    const price = Number(wish.price) || 0;
-    if (raised >= price) {
-      throw new HttpException(
-        'Пожелание полностью профинансировано',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-    const remaining = price - raised;
-    if (dto.amount > remaining) {
-      throw new HttpException(
-        `Сумма превышает остаток ${remaining.toFixed(2)}`,
-        HttpStatus.BAD_REQUEST,
-      );
-    }
+        if (!wish) {
+          throw new NotFoundException('Пожелание не найдено');
+        }
+        if (wish.owner.id === userId) {
+          throw new ForbiddenException(
+            'Нельзя вносить вклад в собственное пожелание',
+          );
+        }
+        const raised = Number(wish.raised) || 0;
+        const price = Number(wish.price) || 0;
+        if (raised >= price) {
+          throw new HttpException(
+            'Пожелание полностью профинансировано',
+            HttpStatus.BAD_REQUEST,
+          );
+        }
+        const remaining = price - raised;
+        if (dto.amount > remaining) {
+          throw new HttpException(
+            `Сумма превышает остаток ${remaining.toFixed(2)}`,
+            HttpStatus.BAD_REQUEST,
+          );
+        }
 
-    const offer = this.offerRepo.create({
-      ...dto,
-      user,
-      item: wish,
-    });
+        const offer = transactionalEntityManager.create(Offer, {
+          ...dto,
+          user,
+          item: wish,
+        });
 
-    const savedOffer = await this.offerRepo.save(offer);
+        const savedOffer = await transactionalEntityManager.save(Offer, offer);
 
-    await this.wishesService.updateRaisedFromOffers(dto.itemId);
+        await this.wishesService.updateRaisedFromOffers(
+          dto.itemId,
+          transactionalEntityManager,
+        );
 
-    if (wish.owner?.email) {
-      await this.emailService.sendOfferNotification(wish.owner.email, {
-        amount: dto.amount,
-        itemName: wish.name,
-        userName: user.username,
-      });
-    }
+        if (wish.owner?.email) {
+          await this.emailService.sendOfferNotification(wish.owner.email, {
+            amount: dto.amount,
+            itemName: wish.name,
+            userName: user.username,
+          });
+        }
 
-    return savedOffer;
+        return savedOffer;
+      },
+    );
   }
 
   async findManyByFilter(

@@ -6,6 +6,7 @@ import {
   Param,
   UseGuards,
   Request,
+  ForbiddenException,
 } from '@nestjs/common';
 import { OffersService } from './offers.service';
 import { WishesService } from '../wishes/wishes.service';
@@ -26,6 +27,12 @@ export class OffersController {
   @Post()
   async create(@Body() dto: CreateOfferDto, @Request() req): Promise<any> {
     const userId = req.user.id;
+    const wish = await this.wishesService.findOneById(dto.itemId);
+    if (wish.owner.id === userId) {
+      throw new ForbiddenException(
+        'Нельзя вносить вклад в собственное пожелание',
+      );
+    }
     const offer = await this.offersService.createWithAuth(dto, userId);
     return instanceToPlain(offer, { excludeExtraneousValues: true });
   }

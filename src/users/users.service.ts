@@ -45,14 +45,19 @@ export class UsersService {
 
   async findMany(
     filter: FindOptionsWhere<User> | string,
+    excludeUserId?: number,
   ): Promise<UserResponse[]> {
     const queryBuilder = this.usersRepository
       .createQueryBuilder('user')
       .select(['user.id', 'user.username', 'user.about', 'user.avatar']);
 
+    if (excludeUserId) {
+      queryBuilder.where('user.id != :excludeId', { excludeId: excludeUserId });
+    }
+
     if (typeof filter === 'string') {
       const searchTerm = filter.trim().toLowerCase();
-      queryBuilder.where(
+      queryBuilder.andWhere(
         new Brackets((qb) => {
           qb.where('LOWER(user.username) LIKE :term', {
             term: `%${searchTerm}%`,
@@ -61,8 +66,8 @@ export class UsersService {
           });
         }),
       );
-    } else {
-      queryBuilder.where(filter);
+    } else if (filter) {
+      queryBuilder.andWhere(filter);
     }
 
     const users = await queryBuilder.getMany();
@@ -91,11 +96,37 @@ export class UsersService {
   ): Promise<UserResponse> {
     const user = await this.findOneByFilterFull(filter);
     const updatedData = { ...updateUserDto };
+
+    if (updateUserDto.email || updateUserDto.username) {
+      const queryBuilder = this.usersRepository.createQueryBuilder('user');
+      queryBuilder.where('user.id != :userId', { userId: user.id });
+
+      if (updateUserDto.email) {
+        queryBuilder.andWhere('user.email = :email', {
+          email: updateUserDto.email,
+        });
+      }
+      if (updateUserDto.username) {
+        queryBuilder.andWhere('user.username = :username', {
+          username: updateUserDto.username,
+        });
+      }
+
+      const existingUser = await queryBuilder.getOne();
+
+      if (existingUser) {
+        throw new ConflictException(
+          'Email или username уже зарегистрированы другим пользователем',
+        );
+      }
+    }
+
     if (updateUserDto.password) {
       updatedData.password = await this.hashService.hash(
         updateUserDto.password,
       );
     }
+
     await this.usersRepository.update(user.id, updatedData);
     return await this.findOneByFilter({ id: user.id });
   }

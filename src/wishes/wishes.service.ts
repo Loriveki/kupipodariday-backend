@@ -6,7 +6,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, FindOptionsWhere } from 'typeorm';
+import { Repository, FindOptionsWhere, DataSource } from 'typeorm';
 import { Wish } from './entities/wish.entity';
 import { CreateWishDto } from './dto/create-wish.dto';
 import { UpdateWishDto } from './dto/update-wish.dto';
@@ -17,6 +17,7 @@ export class WishesService {
   constructor(
     @InjectRepository(Wish)
     private wishesRepository: Repository<Wish>,
+    private dataSource: DataSource,
   ) {}
 
   async findLast(filter: { page?: number }): Promise<Wish[]> {
@@ -107,6 +108,12 @@ export class WishesService {
         'Вы можете обновлять только свои пожелания',
       );
     }
+    if (wish.raised > 0) {
+      throw new HttpException(
+        'Нельзя редактировать подарок, на который уже скидывались',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
     Object.assign(wish, updateWishDto);
     return await this.wishesRepository.save(wish);
   }
@@ -125,72 +132,71 @@ export class WishesService {
   }
 
   async copyWithAuth(id: number, userId: number): Promise<Wish> {
-    const wish = await this.wishesRepository.findOne({
-      where: { id },
-      relations: ['owner'],
-    });
-    if (!wish) {
-      throw new NotFoundException('Пожелание не найдено');
-    }
+    return await this.dataSource.transaction(
+      async (transactionalEntityManager) => {
+        const wish = await transactionalEntityManager.findOne(Wish, {
+          where: { id },
+          relations: ['owner'],
+        });
+        if (!wish) {
+          throw new NotFoundException('Пожелание не найдено');
+        }
 
-    if (wish.owner.id === userId) {
-      throw new HttpException(
-        'Вы не можете копировать свое желание',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
+        if (wish.owner.id === userId) {
+          throw new HttpException(
+            'Вы не можете копировать свое желание',
+            HttpStatus.BAD_REQUEST,
+          );
+        }
 
-    const existingCopy = await this.wishesRepository.findOne({
-      where: {
-        owner: { id: userId },
-        name: wish.name,
-        link: wish.link,
-        image: wish.image,
-        price: wish.price,
-        description: wish.description,
+        const existingCopy = await transactionalEntityManager.findOne(Wish, {
+          where: {
+            owner: { id: userId },
+            name: wish.name,
+            link: wish.link,
+            image: wish.image,
+            price: wish.price,
+            description: wish.description,
+          },
+        });
+        if (existingCopy) {
+          throw new HttpException(
+            'У вас уже есть копия этого подарка',
+            HttpStatus.BAD_REQUEST,
+          );
+        }
+
+        wish.copied += 1;
+        await transactionalEntityManager.save(Wish, wish);
+
+        const newWish = transactionalEntityManager.create(Wish, {
+          name: wish.name,
+          link: wish.link,
+          image: wish.image,
+          price: wish.price,
+          description: wish.description,
+          owner: { id: userId } as any,
+          raised: 0,
+          copied: 0,
+        });
+
+        return await transactionalEntityManager.save(Wish, newWish);
       },
-    });
-    if (existingCopy) {
-      throw new HttpException(
-        'У вас уже есть копия этого подарка',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-
-    wish.copied += 1;
-    await this.wishesRepository.save(wish);
-
-    const newWish = this.wishesRepository.create({
-      name: wish.name,
-      link: wish.link,
-      image: wish.image,
-      price: wish.price,
-      description: wish.description,
-      owner: { id: userId } as any,
-      raised: 0,
-      copied: 0,
-    });
-
-    return await this.wishesRepository.save(newWish);
+    );
   }
 
-  async findManyByFilter(filter: FindOptionsWhere<Wish>): Promise<Wish[]> {
-    return await this.wishesRepository.find({
-      where: filter,
-      relations: ['owner', 'offers', 'offers.user'],
-    });
-  }
-
-  async updateRaisedFromOffers(wishId: number): Promise<void> {
-    await this.wishesRepository.manager.transaction(async (manager) => {
-      const wish = await manager.findOne(Wish, {
+  async updateRaisedFromOffers(wishId: number, manager?: any): Promise<void> {
+    const transactionalEntityManager =
+      manager || this.dataSource.createEntityManager();
+    await transactionalEntityManager.transaction(async (transManager) => {
+      const wish = await transManager.findOne(Wish, {
         where: { id: wishId },
         relations: ['offers'],
       });
       if (!wish) {
         throw new NotFoundException('Пожелание не найдено');
       }
-      const totalRaised = await manager
+      const totalRaised = await transManager
         .createQueryBuilder()
         .select('COALESCE(SUM(o.amount), 0)', 'totalRaised')
         .from(Offer, 'o')
@@ -198,7 +204,14 @@ export class WishesService {
         .getRawOne();
 
       wish.raised = Number(totalRaised.totalRaised);
-      await manager.save(wish);
+      await transManager.save(Wish, wish);
+    });
+  }
+
+  async findManyByFilter(filter: FindOptionsWhere<Wish>): Promise<Wish[]> {
+    return await this.wishesRepository.find({
+      where: filter,
+      relations: ['owner', 'offers', 'offers.user'],
     });
   }
 
@@ -210,5 +223,15 @@ export class WishesService {
       order: { createdAt: 'DESC' },
     });
     return wishes;
+  }
+
+  async getCombinedWishes(page: number): Promise<Wish[]> {
+    const lastWishes = await this.findLast({ page });
+    const topWishes = await this.findTop();
+    const mergedWishes = [...lastWishes, ...topWishes];
+    const uniqueWishes = Array.from(
+      new Map(mergedWishes.map((wish) => [wish.id, wish])).values(),
+    );
+    return uniqueWishes.slice(0, 40);
   }
 }
